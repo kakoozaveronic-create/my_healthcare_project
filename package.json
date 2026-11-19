@@ -1,0 +1,8 @@
+{
+  "name": "hc2-resource-manager",
+  "version": "1.0.0",
+  "description": "Health Centre II Drug & Resource Management - MongoDB + Express + vanilla JS",
+  "main": "server.js",
+  "scripts": { "seed": "node seed.js", "start": "node server.js" },
+  "dependencies": { "express": "^4.19.2", "mongodb": "^6.8.0" }
+}
