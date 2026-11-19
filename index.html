@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HC II Resource Manager</title>
+<style>
+:root{--g:#0f766e;--bg:#f4f7f6;--c:#fff;--t:#1f2937;--m:#6b7280;--r:#dc2626;--b:#e5e7eb}
+@media(prefers-color-scheme:dark){:root{--bg:#111827;--c:#1f2937;--t:#f3f4f6;--m:#9ca3af;--b:#374151}}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{background:var(--g);color:#fff;padding:14px 20px}header h1{margin:0;font-size:19px}header small{opacity:.85}
+nav{display:flex;flex-wrap:wrap;gap:6px;padding:12px 20px}nav button{border:1px solid var(--b);background:var(--c);color:var(--t);padding:8px 14px;border-radius:20px;cursor:pointer}
+nav button.on{background:var(--g);color:#fff;border-color:var(--g)}
+main{padding:0 20px 30px}.bar{display:flex;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
+input,select,textarea{padding:8px;border:1px solid var(--b);border-radius:6px;background:var(--c);color:var(--t);font:inherit;width:100%}
+.bar input{max-width:280px}.btn{background:var(--g);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.btn.d{background:var(--r)}.btn.s{padding:4px 9px;font-size:13px}.btn.o{background:var(--m)}
+.wrap{overflow-x:auto;background:var(--c);border-radius:8px;border:1px solid var(--b)}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--b);white-space:nowrap}
+th{font-size:12px;text-transform:uppercase;color:var(--m)}td.i{white-space:normal;min-width:180px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.card{background:var(--c);border:1px solid var(--b);border-radius:8px;padding:12px}.card b{font-size:26px;color:var(--g);display:block}
+h3{margin:18px 0 8px}.warn{color:var(--r);font-weight:600}
+dialog{border:0;border-radius:10px;padding:20px;width:min(520px,94vw);background:var(--c);color:var(--t)}dialog::backdrop{background:#0006}
+label{display:block;font-size:13px;color:var(--m);margin:10px 0 3px}.row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none}
+</style></head><body>
+<header><h1>Health Centre II Resource Management</h1><small>MongoDB · hc2_resource_db · Drugs, stock, patients, prescriptions &amp; requisitions</small></header>
+<nav id="nav"></nav><main id="main"></main>
+<dialog id="dlg"><form id="form" method="dialog"><h3 id="dt" style="margin-top:0"></h3><div id="fields"></div>
+<div class="row"><button type="button" class="btn o" onclick="dlg.close()">Cancel</button><button class="btn" id="save">Save</button></div></form></dialog>
+<div id="toast"></div>
+<script>
+let S, cur = 'dashboard', editing = null;
+const $ = id => document.getElementById(id), nav = $('nav'), main = $('main'), dlg = $('dlg');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const toast = m => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2600); };
+async function api(url, method = 'GET', body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || r.statusText); return d;
+}
+const show = (v, type) => type === 'date' ? String(v || '').slice(0, 10) : type === 'bool' ? (v ? 'Yes' : 'No')
+  : type === 'json' ? (v || []).map(i => `${i.drug_id}: ${i.qty_prescribed ?? i.qty_requested}${i.qty_dispensed !== undefined ? ' → ' + i.qty_dispensed + ' given' : ' → ' + i.qty_delivered + ' delivered'}${i.shortfall_reason ? ' (' + i.shortfall_reason + ')' : ''}`).join('<br>') : esc(v);
+
+function tabs() {
+  nav.innerHTML = ['dashboard', ...Object.keys(S)].map(k => `<button class="${k === cur ? 'on' : ''}" onclick="go('${k}')">${k === 'dashboard' ? 'Dashboard' : S[k].title}</button>`).join('');
+}
+async function go(k) { cur = k; tabs(); try { k === 'dashboard' ? await dashboard() : await list(); } catch (e) { toast(e.message); } }
+
+async function dashboard() {
+  const st = await api('/api/stats'), rep = {};
+  for (const n of ['low-stock', 'expiring', 'shortages', 'overdue']) rep[n] = await api('/api/reports/' + n);
+  const tbl = (title, rows, note) => `<h3>${title} <span class="warn">(${rows.length})</span></h3><div class="wrap"><table>${rows.length ? `<tr>${Object.keys(rows[0]).map(k => `<th>${k}</th>`).join('')}</tr>` + rows.map(r => `<tr>${Object.entries(r).map(([k, v]) => `<td>${/date/.test(k) ? String(v).slice(0, 10) : esc(v)}</td>`).join('')}</tr>`).join('') : `<tr><td>${note}</td></tr>`}</table></div>`;
+  main.innerHTML = `<div class="cards">${Object.keys(st).map(k => `<div class="card"><b>${st[k]}</b>${S[k].title}</div>`).join('')}</div>`
+    + tbl('Drugs below reorder level', rep['low-stock'], 'All stock levels are healthy.')
+    + tbl('Stock expiring within 90 days', rep.expiring, 'Nothing near expiry.')
+    + tbl('Unmet prescriptions (patients sent away)', rep.shortages, 'No shortages recorded.')
+    + tbl('Overdue requisitions (30+ days)', rep.overdue, 'No overdue orders.');
+}
+
+async function list(q = '') {
+  const s = S[cur], rows = await api(`/api/${cur}?q=${encodeURIComponent(q)}`);
+  main.innerHTML = `<div class="bar"><input id="q" placeholder="Search ${s.title}..." value="${esc(q)}" onkeydown="if(event.key==='Enter')list(this.value)"><button class="btn o" onclick="list($('q').value)">Search</button><button class="btn" onclick="openForm()">+ Add</button><span style="align-self:center;color:var(--m)">${rows.length} record(s)</span></div>
+  <div class="wrap"><table><tr>${s.fields.map(f => `<th>${f[0]}</th>`).join('')}<th></th></tr>${rows.map(r => `<tr>${s.fields.map(f => `<td class="${f[1] === 'json' ? 'i' : ''}">${show(r[f[0]], f[1])}</td>`).join('')}<td><button class="btn s" onclick='openForm(${JSON.stringify(r[s.key])})'>Edit</button> <button class="btn s d" onclick='del(${JSON.stringify(r[s.key])})'>Delete</button></td></tr>`).join('')}</table></div>`;
+}
+
+async function openForm(id) {
+  const s = S[cur]; editing = id || null; const r = id ? await api(`/api/${cur}/${encodeURIComponent(id)}`) : {};
+  $('dt').textContent = (id ? 'Edit ' : 'Add ') + s.title;
+  $('fields').innerHTML = s.fields.map(([f, t]) => { const v = r[f]; const ro = id && f === s.key ? 'readonly' : '';
+    const inp = t === 'json' ? `<textarea name="${f}" rows="6">${esc(JSON.stringify(v ?? [{ drug_id: 'D001', [cur === 'prescriptions' ? 'qty_prescribed' : 'qty_requested']: 10, [cur === 'prescriptions' ? 'qty_dispensed' : 'qty_delivered']: 0 }], null, 1))}</textarea>`
+      : t === 'bool' ? `<select name="${f}"><option value="true" ${v !== false ? 'selected' : ''}>Yes</option><option value="false" ${v === false ? 'selected' : ''}>No</option></select>`
+      : `<input name="${f}" type="${t === 'number' ? 'number' : t === 'date' ? 'date' : 'text'}" min="0" value="${esc(t === 'date' ? String(v || '').slice(0, 10) : v)}" ${ro} required>`;
+    return `<label>${f}</label>${inp}`; }).join('');
+  dlg.showModal();
+}
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target)); const s = S[cur];
+  try { editing ? await api(`/api/${cur}/${encodeURIComponent(editing)}`, 'PUT', body) : await api(`/api/${cur}`, 'POST', body);
+    toast(editing ? 'Updated' : 'Created'); dlg.close(); list(); } catch (er) { toast(er.message); }
+};
+async function del(id) {
+  if (!confirm(`Delete ${id}?`)) return;
+  try { await api(`/api/${cur}/${encodeURIComponent(id)}`, 'DELETE'); toast('Deleted'); list(); } catch (e) { toast(e.message); }
+}
+(async () => { S = await api('/api/schema'); go('dashboard'); })();
+</script></body></html>
